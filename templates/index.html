@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>거래량↑ 횡보 스캐너</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--fg:#1d2330;--mute:#6b7385;--line:#e3e6ec;--acc:#2f6fed;--good:#12a150;--bad:#d64545;--warn:#c98a00;--chip:#eef2fb}
+@media (prefers-color-scheme:dark){:root{--bg:#12151b;--card:#1b1f27;--fg:#e6e9ef;--mute:#9099ab;--line:#2c323d;--acc:#5b8cff;--good:#3ccf7d;--bad:#ff6b6b;--warn:#f0b429;--chip:#252c3a}}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,"Apple SD Gothic Neo","Malgun Gothic",sans-serif;background:var(--bg);color:var(--fg);font-size:14px}
+header{padding:18px 20px 0;max-width:1300px;margin:auto}
+h1{font-size:20px;margin:0 0 4px}
+.sub{color:var(--mute);margin:0 0 14px}
+.demo{background:var(--warn);color:#000;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:6px}
+main{max-width:1300px;margin:auto;padding:0 20px 40px}
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:16px}
+.tab{padding:10px 16px;border:none;background:none;color:var(--mute);cursor:pointer;font-size:14px;border-bottom:2px solid transparent}
+.tab.on{color:var(--fg);border-color:var(--acc);font-weight:600}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:16px}
+.card h2{font-size:15px;margin:0 0 12px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--mute)}
+input,select,textarea{font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:7px 8px}
+textarea{width:100%;min-height:60px;resize:vertical}
+button.b{font:inherit;background:var(--acc);color:#fff;border:none;border-radius:6px;padding:8px 14px;cursor:pointer;font-weight:600}
+button.b.ghost{background:var(--chip);color:var(--fg)}
+button.b:disabled{opacity:.5;cursor:wait}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px}
+.stats{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-bottom:12px}
+.stat{background:var(--bg);border-radius:8px;padding:10px}
+.stat b{display:block;font-size:20px;margin-top:2px}
+.stat span{color:var(--mute);font-size:12px}
+.tw{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}
+th,td{padding:7px 8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
+th{color:var(--mute);font-weight:500;font-size:12px;cursor:pointer;position:sticky;top:0;background:var(--card)}
+td:first-child,th:first-child,td.l,th.l{text-align:left}
+tr.click{cursor:pointer}tr.click:hover td{background:var(--chip)}
+.pos{color:var(--good)}.neg{color:var(--bad)}.mute{color:var(--mute)}
+.pill{display:inline-block;border-radius:10px;padding:1px 8px;font-size:12px;font-weight:600}
+.pill.y{background:var(--good);color:#fff}.pill.n{background:var(--chip);color:var(--mute)}.pill.p{background:var(--warn);color:#000}
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+.chip{background:var(--chip);border-radius:12px;padding:3px 10px;font-weight:600;cursor:pointer}
+.sec{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:8px}
+.sec label{font-size:12px}
+.msg{color:var(--mute);margin:8px 0}
+.err{color:var(--bad)}
+.bar{height:6px;background:var(--line);border-radius:3px;overflow:hidden;width:70px;display:inline-block;vertical-align:middle}
+.bar i{display:block;height:100%;background:var(--acc)}
+canvas{max-width:100%}
+details summary{cursor:pointer;color:var(--mute);margin-bottom:8px}
+.hidden{display:none}
+@media (max-width:600px){header,main{padding-left:16px;padding-right:16px}}
+</style>
+</head>
+<body>
+<header>
+  <h1>거래량↑ · 주가 횡보 스캐너{% if demo %}<span class="demo">DEMO 합성 데이터</span>{% endif %}</h1>
+  <p class="sub">① 백테스트로 "거래량 증가 + 횡보 → 이후 상승" 패턴이 통했던 종목·조건을 찾고 → ② 같은 조건으로 섹터별 시총 상위 5종목을 현재 데이터로 스캔합니다.</p>
+</header>
+<main>
+  <!-- 공통 조건 -->
+  <div class="card">
+    <h2>패턴 조건 (백테스트·스캔 공통)</h2>
+    <div class="grid">
+      <label>횡보 기간 (거래일)<input id="p_window" type="number" min="5"></label>
+      <label>거래량 기준 기간 (직전 거래일)<input id="p_base" type="number" min="10"></label>
+      <label>박스 폭 상한 %<input id="p_max_range" type="number" step="0.5"></label>
+      <label>기간 순변화 상한 ±%<input id="p_max_drift" type="number" step="0.5"></label>
+      <label>거래량 증가 배수 ≥<input id="p_vol_ratio" type="number" step="0.05"></label>
+      <label>이후 관찰 기간 (거래일)<input id="p_horizon" type="number" min="1"></label>
+      <label>성공 기준 상승률 %<input id="p_target" type="number" step="0.5"></label>
+      <label>데이터 기간<select id="period"><option>2y</option><option>3y</option><option selected>5y</option><option>10y</option></select></label>
+    </div>
+    <p class="msg">횡보 = 최근 N일 종가의 (최고−최저)/평균 ≤ 박스 폭 & 시작 대비 변화 ≤ 순변화 상한 · 거래량 증가 = 최근 N일 평균 거래량 ÷ 그 이전 기준기간 평균 ≥ 배수 · 성공 = 신호 후 관찰 기간 내 최고 종가가 성공 기준 이상 상승</p>
+  </div>
+
+  <div class="tabs">
+    <button class="tab on" data-t="bt">① 백테스트</button>
+    <button class="tab" data-t="sc">② 현재 스캔</button>
+  </div>
+
+  <!-- 백테스트 -->
+  <section id="bt">
+    <div class="card">
+      <h2>종목 입력</h2>
+      <textarea id="bt_tickers" placeholder="예: AAPL MSFT NVDA, 공백·쉼표 구분"></textarea>
+      <div class="row">
+        <button class="b" id="bt_run">백테스트 실행</button>
+        <button class="b ghost" id="bt_opt">조건 최적화 (그리드 탐색)</button>
+        <button class="b ghost" id="bt_fill">섹터 상위 5 전체 넣기</button>
+        <span class="msg" id="bt_msg"></span>
+      </div>
+    </div>
+    <div id="opt_box" class="card hidden"><h2>조건 최적화 결과 <span class="mute" style="font-weight:400">— 행 클릭 시 조건 적용 (점수 = 표본 수 반영 승률 하한)</span></h2><div class="tw"><table id="opt_tbl"></table></div></div>
+    <div id="bt_box" class="hidden">
+      <div class="card">
+        <h2>전체 요약</h2>
+        <div class="stats" id="bt_stats"></div>
+        <div><span class="mute">선별 종목 (신호 2회↑, 승률 50%↑ & 무조건 승률보다 높음):</span> <div class="chips" id="bt_sel" style="margin-top:6px"></div></div>
+        <div class="row"><button class="b ghost" id="bt_to_scan">선별 종목을 현재 스캔에 추가</button></div>
+      </div>
+      <div class="card"><h2>종목별 결과 <span class="mute" style="font-weight:400">— 행 클릭 시 차트</span></h2><div class="tw"><table id="bt_tbl"></table></div></div>
+      <div class="card"><details open><summary>횡보 후 상승에 성공한 사례 목록</summary><div class="tw" style="max-height:420px;overflow:auto"><table id="bt_win"></table></div></details></div>
+    </div>
+  </section>
+
+  <!-- 현재 스캔 -->
+  <section id="sc" class="hidden">
+    <div class="card">
+      <h2>섹터별 시총 상위 종목</h2>
+      <div class="sec" id="sectors"></div>
+      <div class="row">
+        <button class="b" id="sc_run">현재 스캔 실행</button>
+        <button class="b ghost" id="sc_refresh">시총 기준 상위 5 갱신</button>
+        <button class="b ghost" id="sc_reset">기본값</button>
+        <label style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" id="sc_only"> 조건 충족 종목만 보기</label>
+        <span class="msg" id="sc_msg"></span>
+      </div>
+    </div>
+    <div id="sc_box" class="hidden">
+      <div class="card"><h2>현재 조건 충족 종목</h2><div class="chips" id="sc_match"></div></div>
+      <div class="card"><h2>섹터별 현황 <span class="mute" style="font-weight:400">— 근접도 = 세 조건 충족 정도 평균 (1 = 전부 충족), 행 클릭 시 차트</span></h2><div class="tw"><table id="sc_tbl"></table></div></div>
+    </div>
+  </section>
+
+  <!-- 차트 -->
+  <div id="ch_box" class="card hidden">
+    <h2 id="ch_title"></h2>
+    <canvas id="ch_price" height="110"></canvas>
+    <canvas id="ch_vol" height="40"></canvas>
+    <p class="msg"><span class="pos">●</span> 신호 후 성공 · <span class="neg">●</span> 실패 · <span style="color:var(--warn)">●</span> 결과 대기(진행 중) · 노란 음영/막대 = 조건 충족 구간</p>
+  </div>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const PK = ["window","base","max_range","max_drift","vol_ratio","horizon","target"];
+const PCT = new Set(["max_range","max_drift","target"]);
+let DEF = {}, sectors = {}, chP, chV;
+
+const pct = (v, d=1) => v==null ? "–" : (v*100).toFixed(d)+"%";
+const sgn = v => v==null ? "" : v>0 ? "pos" : v<0 ? "neg" : "";
+const num = (v, d=2) => v==null ? "–" : (+v).toFixed(d);
+
+function getParams(){ const p={}; PK.forEach(k=>{ let v=parseFloat($("#p_"+k).value); if(PCT.has(k)) v/=100; p[k]=v; }); return p; }
+function setParams(p){ PK.forEach(k=>{ if(p[k]!=null) $("#p_"+k).value = PCT.has(k) ? +(p[k]*100).toFixed(2) : p[k]; }); }
+function tickers(){ return $("#bt_tickers").value.toUpperCase().split(/[\s,]+/).filter(Boolean); }
+
+async function api(url, data){
+  const r = await fetch(url, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(data)});
+  const j = await r.json(); if(!r.ok || j.error) throw new Error(j.error || r.statusText); return j;
+}
+async function busy(btn, msgEl, label, fn){
+  btn.disabled = true; msgEl.className="msg"; msgEl.textContent = label+" 중… (처음엔 데이터 다운로드로 수십 초 걸릴 수 있음)";
+  try { await fn(); msgEl.textContent=""; } catch(e){ msgEl.className="msg err"; msgEl.textContent = "오류: "+e.message; }
+  finally { btn.disabled = false; }
+}
+
+// 표 렌더 (정렬 가능)
+function table(el, cols, rows, onClick){
+  let sortK=null, asc=false;
+  const draw = () => {
+    let rs = rows.slice();
+    if(sortK) rs.sort((a,b)=>{ const x=a[sortK], y=b[sortK]; if(x==null) return 1; if(y==null) return -1; return (x>y?1:x<y?-1:0)*(asc?1:-1); });
+    el.innerHTML = "<thead><tr>"+cols.map(c=>`<th class="${c.l?'l':''}" data-k="${c.k}">${c.h}${sortK===c.k?(asc?" ▲":" ▼"):""}</th>`).join("")+"</tr></thead><tbody>"+
+      rs.map((r,i)=>`<tr class="${onClick?'click':''}" data-i="${rows.indexOf(r)}">`+cols.map(c=>`<td class="${c.l?'l':''} ${c.cls?c.cls(r):''}">${c.f?c.f(r):(r[c.k]??"–")}</td>`).join("")+"</tr>").join("")+"</tbody>";
+    el.querySelectorAll("th").forEach(th=>th.onclick=()=>{ const k=th.dataset.k; asc = sortK===k ? !asc : false; sortK=k; draw(); });
+    if(onClick) el.querySelectorAll("tbody tr").forEach(tr=>tr.onclick=()=>onClick(rows[+tr.dataset.i]));
+  };
+  draw();
+}
+
+// ---------- 백테스트 ----------
+$("#bt_run").onclick = () => busy($("#bt_run"), $("#bt_msg"), "백테스트", async () => {
+  const t = tickers(); if(!t.length) throw new Error("종목을 입력하세요");
+  const r = await api("/api/backtest", {tickers:t, params:getParams(), period:$("#period").value});
+  $("#bt_box").classList.remove("hidden");
+  const o = r.overall, ok = r.results.filter(x=>!x.error);
+  const base = ok.length ? ok.reduce((s,x)=>s+(x.base_win_rate||0),0)/ok.length : null;
+  $("#bt_stats").innerHTML = [
+    ["종목 수", ok.length+" / "+r.results.length], ["총 신호", o.signals + (o.pending?` (+대기 ${o.pending})`:"")],
+    ["성공 / 승률", `${o.wins} / ${pct(o.win_rate)}`], ["무조건 승률 (비교)", pct(base)],
+    ["평균 최고 상승", pct(o.avg_fwd_max)], [`평균 ${r.params.horizon}일 후 수익`, pct(o.avg_fwd_ret)], ["평균 최대 하락", pct(o.avg_fwd_min)]
+  ].map(([a,b])=>`<div class="stat"><span>${a}</span><b>${b}</b></div>`).join("");
+  $("#bt_sel").innerHTML = r.selected.length ? r.selected.map(t=>`<span class="chip" data-t="${t}">${t}</span>`).join("") : '<span class="mute">없음 — 조건을 완화하거나 최적화를 시도해 보세요</span>';
+  $("#bt_sel").querySelectorAll(".chip").forEach(c=>c.onclick=()=>chart(c.dataset.t));
+  $("#bt_to_scan").onclick = () => { if(!r.selected.length) return; sectors["백테스트 선별"] = r.selected; renderSectors(); showTab("sc"); };
+  table($("#bt_tbl"), [
+    {k:"ticker",h:"종목",l:1,f:x=>`<b>${x.ticker}</b>`+(x.error?` <span class="err">${x.error}</span>`:"")},
+    {k:"signals",h:"신호"},{k:"wins",h:"성공"},
+    {k:"win_rate",h:"승률",f:x=>pct(x.win_rate)},{k:"base_win_rate",h:"무조건 승률",f:x=>pct(x.base_win_rate)},
+    {k:"edge",h:"우위",f:x=>pct(x.edge),cls:x=>sgn(x.edge)},
+    {k:"avg_fwd_max",h:"평균 최고상승",f:x=>pct(x.avg_fwd_max),cls:x=>sgn(x.avg_fwd_max)},
+    {k:"avg_fwd_ret",h:"평균 기간수익",f:x=>pct(x.avg_fwd_ret),cls:x=>sgn(x.avg_fwd_ret)},
+    {k:"avg_fwd_min",h:"평균 최대하락",f:x=>pct(x.avg_fwd_min),cls:x=>sgn(x.avg_fwd_min)},
+    {k:"pending",h:"진행중 신호",f:x=>x.pending?`<span class="pill p">${x.pending}</span>`:"0"},
+  ], r.results, x=>!x.error && chart(x.ticker));
+  table($("#bt_win"), [
+    {k:"ticker",h:"종목",l:1,f:x=>`<b>${x.ticker}</b>`},{k:"start",h:"횡보 시작",l:1},{k:"date",h:"신호일",l:1},
+    {k:"close",h:"종가",f:x=>num(x.close)},{k:"range_pct",h:"박스폭",f:x=>pct(x.range_pct)},
+    {k:"vol_ratio",h:"거래량배수",f:x=>num(x.vol_ratio)+"x"},
+    {k:"fwd_max",h:"최고상승",f:x=>pct(x.fwd_max),cls:x=>sgn(x.fwd_max)},{k:"fwd_ret",h:"기간수익",f:x=>pct(x.fwd_ret),cls:x=>sgn(x.fwd_ret)},
+    {k:"breakout",h:"박스 돌파",f:x=>x.breakout?"✔":""},
+  ], r.winners, x=>chart(x.ticker));
+});
+
+$("#bt_opt").onclick = () => busy($("#bt_opt"), $("#bt_msg"), "최적화", async () => {
+  const t = tickers(); if(!t.length) throw new Error("종목을 입력하세요");
+  const rows = await api("/api/optimize", {tickers:t, params:getParams(), period:$("#period").value});
+  $("#opt_box").classList.remove("hidden");
+  if(!rows.length){ $("#opt_tbl").innerHTML='<tr><td class="mute">신호 5회 이상 나온 조건 조합이 없습니다.</td></tr>'; return; }
+  rows.forEach(r=>Object.assign(r, r.params));
+  table($("#opt_tbl"), [
+    {k:"window",h:"횡보기간",l:1},{k:"max_range",h:"박스폭",f:x=>pct(x.max_range,0)},{k:"max_drift",h:"순변화",f:x=>pct(x.max_drift,0)},
+    {k:"vol_ratio",h:"거래량배수",f:x=>x.vol_ratio+"x"},{k:"signals",h:"신호"},{k:"win_rate",h:"승률",f:x=>pct(x.win_rate)},
+    {k:"base_win_rate",h:"무조건",f:x=>pct(x.base_win_rate)},{k:"edge",h:"우위",f:x=>pct(x.edge),cls:x=>sgn(x.edge)},
+    {k:"avg_fwd_max",h:"평균 최고상승",f:x=>pct(x.avg_fwd_max)},{k:"score",h:"점수",f:x=>num(x.score,3)},
+  ], rows, x=>{ setParams(x.params); $("#bt_run").click(); });
+});
+
+$("#bt_fill").onclick = () => { $("#bt_tickers").value = [...new Set(Object.values(sectors).flat())].join(" "); };
+
+// ---------- 현재 스캔 ----------
+function renderSectors(){
+  $("#sectors").innerHTML = Object.entries(sectors).map(([s,ts])=>`<label>${s}<input data-s="${s}" value="${ts.join(" ")}"></label>`).join("");
+  $("#sectors").querySelectorAll("input").forEach(i=>i.onchange=()=>{ sectors[i.dataset.s]=i.value.toUpperCase().split(/[\s,]+/).filter(Boolean); });
+}
+$("#sc_reset").onclick = () => { sectors = structuredClone(DEF.sectors); renderSectors(); };
+$("#sc_refresh").onclick = () => busy($("#sc_refresh"), $("#sc_msg"), "시총 조회", async () => {
+  const r = await api("/api/sectors/refresh", {n:5});
+  for(const [s,arr] of Object.entries(r)) sectors[s] = arr.map(x=>x.ticker);
+  renderSectors();
+});
+let lastScan = null;
+function drawScan(){
+  if(!lastScan) return;
+  const rows = $("#sc_only").checked ? lastScan.rows.filter(r=>r.match) : lastScan.rows;
+  table($("#sc_tbl"), [
+    {k:"sector",h:"섹터",l:1},{k:"ticker",h:"종목",l:1,f:x=>`<b>${x.ticker}</b>`+(x.error?` <span class="err">${x.error}</span>`:"")},
+    {k:"match",h:"조건",f:x=>x.error?"":x.match?`<span class="pill y">충족 ${x.streak}일째</span>`:'<span class="pill n">미충족</span>'},
+    {k:"near",h:"근접도",f:x=>x.near==null?"–":`<span class="bar"><i style="width:${x.near*100}%"></i></span> ${num(x.near)}`},
+    {k:"close",h:"종가",f:x=>num(x.close)},{k:"range_pct",h:"박스폭",f:x=>pct(x.range_pct)},
+    {k:"drift",h:"기간변화",f:x=>pct(x.drift),cls:x=>sgn(x.drift)},{k:"vol_ratio",h:"거래량배수",f:x=>x.vol_ratio==null?"–":num(x.vol_ratio)+"x"},
+    {k:"hist_signals",h:"과거 신호"},{k:"hist_win_rate",h:"과거 승률",f:x=>pct(x.hist_win_rate)},
+    {k:"base_win_rate",h:"무조건 승률",f:x=>pct(x.base_win_rate)},{k:"hist_avg_fwd_max",h:"과거 평균 최고상승",f:x=>pct(x.hist_avg_fwd_max)},
+  ], rows, x=>!x.error && chart(x.ticker));
+}
+$("#sc_only").onchange = drawScan;
+$("#sc_run").onclick = () => busy($("#sc_run"), $("#sc_msg"), "스캔", async () => {
+  lastScan = await api("/api/scan", {sectors, params:getParams(), period:$("#period").value});
+  $("#sc_box").classList.remove("hidden");
+  const m = lastScan.rows.filter(r=>r.match);
+  $("#sc_match").innerHTML = m.length ? m.map(r=>`<span class="chip" data-t="${r.ticker}" title="${r.sector}">${r.ticker} · 과거승률 ${pct(r.hist_win_rate,0)}</span>`).join("")
+    : '<span class="mute">현재 조건을 모두 충족하는 종목이 없습니다. 근접도 높은 순으로 정렬해 후보를 확인하세요.</span>';
+  $("#sc_match").querySelectorAll(".chip").forEach(c=>c.onclick=()=>chart(c.dataset.t));
+  drawScan();
+});
+
+// ---------- 차트 ----------
+async function chart(t){
+  const d = await api("/api/chart", {ticker:t, params:getParams(), period:$("#period").value});
+  $("#ch_box").classList.remove("hidden"); $("#ch_title").textContent = `${d.ticker} — 종가 · 거래량 · 패턴 신호 (${d.events.length}회)`;
+  const css = getComputedStyle(document.documentElement), c = k => css.getPropertyValue(k).trim();
+  const idx = new Map(d.dates.map((x,i)=>[x,i]));
+  const pts = col => d.events.filter(col).map(e=>({x:e.date, y:d.close[idx.get(e.date)]}));
+  const hi = Math.max(...d.close.filter(v=>v!=null))*1.05;
+  const shade = d.signal.map(s=>s?hi:null);
+  chP && chP.destroy(); chV && chV.destroy();
+  const common = {animation:false, responsive:true, interaction:{mode:"index",intersect:false},
+    scales:{x:{ticks:{maxTicksLimit:10,color:c("--mute")},grid:{color:c("--line")}}, y:{ticks:{color:c("--mute"),maxTicksLimit:6},grid:{color:c("--line")},afterFit:a=>{a.width=70}}},
+    plugins:{legend:{display:false}}};
+  chP = new Chart($("#ch_price"), {type:"line", data:{labels:d.dates, datasets:[
+    {data:d.close, borderColor:c("--acc"), borderWidth:1.3, pointRadius:0},
+    {type:"scatter", data:pts(e=>e.success===true), backgroundColor:c("--good"), pointRadius:5},
+    {type:"scatter", data:pts(e=>e.success===false), backgroundColor:c("--bad"), pointRadius:5},
+    {type:"scatter", data:pts(e=>e.pending), backgroundColor:c("--warn"), pointRadius:6},
+    {data:shade, borderWidth:0, pointRadius:0, fill:"start", backgroundColor:"rgba(240,180,41,.15)", spanGaps:false},
+  ]}, options:{...common, scales:{...common.scales, y:{...common.scales.y, max:Math.ceil(hi), min:Math.floor(Math.min(...d.close.filter(v=>v!=null))*0.95)}}}});
+  chV = new Chart($("#ch_vol"), {type:"bar", data:{labels:d.dates, datasets:[{data:d.volume, backgroundColor:d.signal.map(s=>s?c("--warn"):c("--line"))}]},
+    options:{...common, scales:{...common.scales, x:{display:false}}}});
+  $("#ch_box").scrollIntoView({behavior:"smooth"});
+}
+
+// ---------- 탭 / 초기화 ----------
+function showTab(t){ document.querySelectorAll(".tab").forEach(b=>b.classList.toggle("on", b.dataset.t===t)); ["bt","sc"].forEach(s=>$("#"+s).classList.toggle("hidden", s!==t)); }
+document.querySelectorAll(".tab").forEach(b=>b.onclick=()=>showTab(b.dataset.t));
+fetch("/api/defaults").then(r=>r.json()).then(d=>{ DEF=d; setParams(d.params); sectors=structuredClone(d.sectors); renderSectors(); });
+</script>
+</body>
+</html>
